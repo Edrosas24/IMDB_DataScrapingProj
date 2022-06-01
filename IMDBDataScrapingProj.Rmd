@@ -1,0 +1,315 @@
+---
+title: "Movie Analysis Case Study"
+subtitle: "Webscaping using Rvest"
+author: "Edwin Rosas"
+output:
+  html_document:
+    df_print: paged 
+    toc: true # table of content true
+    toc_float: TRUE
+    toc_depth: 5  # upto three depths of headings (specified by #, ## and ###)
+    number_sections: False  ## if you want number sections at each table header
+    theme: united  # many options for theme, this one is my favorite.
+    highlight: tango  # specifies the syntax highlighting style
+    #css: my.css   # you can add your custom css, should be in same folder
+---
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(plyr)
+library(fpp3)
+library(readr)
+library(GGally)
+ # For round_any
+library(ggpubr)
+library(wesanderson)
+```
+
+![](IMDBlogo.png){width="100"}
+
+# Introduction
+
+Using Data Scraping via Rvest, we are able to scrape multiple pages to extract the top 200 Action movies of all time according to IMDB. From each movie we were able to extract Movie statistics such as movie gross income, Metascore, Rating, total votes, and year of debut. We then conducted preliminary analysis of the data.
+
+## Task
+
+Using data visualizations we explore patterns and trends from our newly scraped data. We will also try to see the difference of Metascore (weighted Average) and IMDB rating (site specific)
+
+[Click here](https://github.com/Edrosas24/IMDB_DataScrapingProj) to view Code
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+get_cast = function(movie_link){ # what our input is called, not to be confused with 'movie_links'
+  # movie_link ="https://www.imdb.com/title/tt2488496/fullcredits/" # TEST LINK
+  movie_page = read_html(movie_link) # read in the movie link
+  movie_cast = movie_page %>% html_nodes(".primary_photo+ td a") %>% 
+    html_text() %>% # grabs the name 
+    paste(collapse = ",") %>%  # Collapses each name to one string, rather than having them have their own.
+    return(movie_cast)
+}
+
+
+
+
+movies200 = data.frame()
+
+for (page_result in seq(from=1, to = 151, by = 50)) { #create a sequence that will increase by 50 (number of movies on page)
+  # We will us the altered first link
+  link = paste0("https://www.imdb.com/search/title/?title_type=feature&num_votes=25000,&genres=action&sort=boxoffice_gross_us,desc&start=",
+                page_result,
+                "&ref_=adv_nxt")
+  page = read_html(link)
+  movie_links = page %>% html_nodes(".lister-item-header a") %>% 
+    html_attr('href') %>% paste0('https://www.imdb.com', .) %>% substr(1, nchar(.)-15) %>% paste0("fullcredits/") # the periods are a way to call of the data before the pipe
+  
+  rank = page %>% html_nodes(".text-primary") %>% html_text() %>% as.numeric()
+  name = page %>% html_nodes(".lister-item-header a") %>% html_text() 
+  year = page %>% html_nodes(".text-muted.unbold") %>% html_text()
+  # year = year %>% substr(start = 2, stop = 5) %>% as.numeric()
+  rating = page %>% html_nodes(".ratings-imdb-rating strong") %>% html_text() %>% as.numeric()
+  metascore = page %>% html_nodes(".metascore") %>% html_text()
+  metascore = metascore %>% substr(start = 0, stop = 3) %>% as.numeric()
+  rating = page %>% html_nodes(".ratings-imdb-rating strong") %>% html_text() %>% as.numeric()
+  gross = page %>% html_nodes(".ghost~ .text-muted+ span") %>%html_text()
+  # gross = substr(gross, start = 1, stop = nchar(gross) - 1) %>% as.numeric()
+  votes = page %>% html_nodes(".sort-num_votes-visible span:nth-child(2)") %>% html_text()
+  votes = votes %>% decomma()
+  synopsis= page %>% html_nodes(".ratings-bar+ .text-muted") %>% html_text() 
+  cast = sapply(movie_links, 
+                FUN = get_cast, 
+                USE.NAMES = FALSE)
+  
+  print(link)
+
+  movies200 = rbind(movies200, data.frame(rank,name,year,rating,metascore,votes,gross, synopsis, cast, stringsAsFactors = F))
+  # As it loops, the new page will be apended to the movies data frame
+  print(paste("Page:",page_result)) # this is a check to see if the code is running.
+}
+
+# write.csv(movies200, file = "movies200.csv")
+```
+
+# Preparing Our Data
+
+Our Data is directly taken from IMDB website. IMDB actively gathers information from and verify items with studios and filmmakers, but most of the information is user submitted.
+
+**Dataset**: movies.200.csv
+
+**License**: Made available via IMDB
+
+**Time Frame of Data**: May 2022
+
+## Quality of our Data Source
+
+-   **Reliability:** IMDB's user submitted data is okay since the data fields of voting, metascore, and rating are subjective.
+-   **Originality:** This is a first party source since the data was scraped form IMDB
+-   **Comprehensive:** How comprehensive we wanted the data was dependent on how much of the webpage we wanted to scrape. For this analysis, the extracted fields were sufficient.
+-   **Current:** The data is as currents as when we decide to run our code again.
+-   **Cited**: The data has been cited by IMDB
+
+# Processing our Data
+
+For the majority of our analysis we used R to data scrape the IMDB website, and for visualizations.
+
+## Our Working Data
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+library(readr)
+data <- read.csv("movies200.csv")
+data %>% head()
+
+```
+
+## Data Cleaning
+
+1.  Omit the the index column 'X'
+2.  Fix 'year' format : Omit parenthesis and change to numeric data type
+3.  Fix 'gross' format : Omit non-numeric symbols to make data type to numeric
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+data.v2 = data %>% select(2:ncol(data)) %>% as.tibble()
+
+
+data.v2= data.v2 %>% mutate(year = gsub("[(I) ]", "", data.v2$year) %>% as.numeric(),
+                            gross = gsub("[$M]", "", data.v2$gross) %>% as.numeric())
+```
+
+# Data Analysis and Visualization
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(wesanderson)
+library(GGally)
+# Customize your scatterplots as you wish here:
+lowerfun <- function(data, mapping) {
+  ggplot(data = data, mapping = mapping)+ 
+    geom_point(alpha = .25) + 
+    geom_smooth(method = "lm", formula = y ~ x, 
+                fill = "blue", color = "red", size =.5)+
+    geom_smooth(method = "loess", formula = y~x,
+                se = FALSE, color = "green", size = .5)
+}
+# Plot the scatterplot matrix
+ggpairs(data.v2,columns = c(1,3,4,5,6,7),
+        lower = list(continuous = wrap(lowerfun)))
+```
+
+We see many patterns of interest from comparing all our fields
+
+-   Gross Income of a movie is correlated with year, both rating scores, and votes on the website rating.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+data.v2 %>% 
+   group_by(year) %>% 
+   summarise(AverageGross = mean(gross)) %>% 
+   ggplot(aes(x=year ,y=AverageGross, fill = AverageGross)) +
+   geom_col()+ geom_line() + geom_point()+ geom_smooth(method="lm", formula =y~x)+
+   # scale_fill_gradient(low = "red", high = "green") +
+   scale_fill_gradient2(low="red", high="green", mid="yellow",midpoint=mean(data.v2$gross)) +
+  ggtitle("Average Gross Income by Year")+
+  theme_minimal()
+```
+
+-   We see an overall increase in gross income through out recent years, then in 2020 and 2021 we see the effects of the pandemic drastically lower gross income
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+x = data.v2 %>% 
+   group_by(metascore) %>% 
+   summarise(AverageGross = mean(gross) )%>% 
+   ggplot(aes(x=metascore ,y=AverageGross, fill = AverageGross)) +
+   geom_col()+ geom_line()+ geom_point()+ geom_smooth(method="lm", formula =y~x)+
+   # scale_fill_gradient(low = "red", high = "green") 
+   scale_fill_gradient2(low="red", high="green", mid="yellow",midpoint= mean(data.v2$gross)) + ggtitle("Average Gross Income by Metascore")+
+  theme_minimal()
+
+y = data.v2 %>% 
+   group_by(rating) %>% 
+   summarise(AverageGross = mean(gross))%>% 
+   ggplot(aes(x=rating ,y=AverageGross, fill = AverageGross)) +
+   geom_col()+ geom_line() +geom_point()+ geom_smooth(method="lm", formula =y~x)+
+   # scale_fill_gradient(low = "red", high = "green") 
+   scale_fill_gradient2(low="red", high="green", mid="yellow",midpoint= mean(data.v2$gross)) + ggtitle("Average Gross Income by IMDB Rating")+
+  theme_minimal()
+
+ggarrange(x,y, ncol=1, nrow = 2)
+```
+
+-   Both scores look to have the same marginal correlation with Average Gross Income.
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+library(plyr)
+data.v2 %>% 
+   group_by(metascore) %>% 
+   summarise(AverageGross = mean(gross),
+             MetascoreFloored = metascore %>% round_any(10, floor)) %>% 
+   ggplot(aes(x=MetascoreFloored ,y=AverageGross, fill = AverageGross)) +
+   geom_col()+
+   # scale_fill_gradient(low = "red", high = "green") 
+   scale_fill_gradient2(low="red", high="green", mid="yellow",midpoint= mean(data.v2$gross), "Metascore") +
+  ggtitle("Count by Metascore")+
+  theme_minimal()
+
+
+
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+# library(plyr)
+# round_any(132.1, 10)               # returns 130
+# round_any(132.1, 10, f = ceiling)  # returns 140
+# round_any(132.1, 5, f = ceiling)   # returns 135
+
+data.v2 %>% 
+   group_by(rating) %>% 
+   summarise(ratingCount = n(),
+             RatingFloored = rating %>% round_any(.5, floor)) %>% 
+   ggplot(aes(x=RatingFloored ,y=ratingCount, fill = RatingFloored)) +
+   geom_col()+
+   # scale_fill_gradient(low = "red", high = "green") 
+ scale_fill_gradient2(low="red", high="green", mid="yellow",midpoint=7.5, "Rating")+ 
+  ggtitle("Count by Rating")+
+  theme_minimal() 
+```
+
+We have to score the quality of a movie on the IMDB website: Metascore and Rating. In order to compare these two scores, we create Rating Type column.
+
+-   In order to compare the the the two scores to the same scale, we multiply rating by 10 to get rating10
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Data longer the ratings 
+
+data.longer = data.v2 %>% mutate(rating10 = rating*10) %>% pivot_longer(cols = c(10,5), values_to = "RatingVals", names_to = "RatingType" )
+data.longer %>% select(RatingType, RatingVals,everything()) %>% head()
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+data.longer %>% group_by(RatingType) %>% 
+  summarise(AvgRating= mean(RatingVals))  
+```
+
+-   On average, IMDB user ratings are 8 points higher than the weighted average metascore.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+data.longer %>% group_by(RatingType, RatingVals) %>% ggplot(aes(x=RatingVals, y=RatingType, col = RatingType)) + geom_boxplot()+
+   scale_color_manual(values= wes_palette("Darjeeling1", n = 3)) +
+  theme_minimal() + coord_flip()
+```
+
+-   Metascore has a larger of range of score values than the website ratings
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+data.longer %>% group_by(year,RatingType) %>% ggplot(aes(x=year, y=RatingVals, col = RatingType)) + geom_point(alpha = .25) + geom_smooth(method= "lm", formula = y~x) + 
+   scale_color_manual(values= wes_palette("Darjeeling1", n = 2)) + 
+  theme_minimal() +
+  ggtitle("Metascore vs Rating by Year")
+```
+
+-   This pattern has been consistent since the first recorded data.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+data.longer %>% group_by(gross,RatingType) %>% 
+  ggplot(aes(x=RatingVals, y=gross, col = RatingType)) + 
+  geom_smooth(method = "lm", col = "black", alpha = .5)+
+  geom_point(alpha = .25) + geom_smooth(method= "lm", formula = y~x) + 
+  scale_color_manual(values= wes_palette("Darjeeling1", n = 2))+
+  theme_minimal() 
+```
+
+-   Higher values of both scores are correlated with a higher gross income of a film.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+data.v2 %>%
+  mutate(RatingFloored = rating %>% 
+                     round_any(.5, floor),
+         grossRounded = gross %>% round_any(100)) %>% 
+  group_by(gross,votes, rating) %>% 
+  ggplot(aes(x=rating, y=votes, col = grossRounded)) + 
+  geom_point(alpha = 1) + 
+  geom_smooth(method= "lm", formula = y~x) + 
+  scale_color_gradient2(low="red", high="green", mid="yellow",midpoint=median(data.v2$gross), "Gross Income in Millions") +
+  theme_minimal() +
+  ggtitle("IMDB Rating vs Votes Received", subtitle = "")
+```
+
+-   More votes are highly correlated with higher ratings, and higher grossing movies seem to get more user votes. We will explore this in the next visual
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+data.v2 %>%
+  mutate(RatingFloored = rating %>% 
+                     round_any(.5, floor),
+         grossRounded = gross %>% round_any(100)) %>% 
+  group_by(gross,votes) %>% 
+  ggplot(aes(x=gross, y=votes, col = RatingFloored)) + 
+  geom_point(alpha = 1) + 
+  geom_smooth(method= "lm", formula = y~x) + 
+  scale_color_gradient2(low="red", high="green", mid="yellow",midpoint=median(data.v2$rating), "User Rating") +
+  theme_minimal() + coord_flip()
+```
+
+-   Number of user votes in the IMDB website, is correlated with higher grossing movies.
+
+# Our Findings
+
+In this study we attempted to find patterns and trends in out data scraped movie data from the IMDB website. We were particularly interested in how the gross income of film was correlated with different variables.
+
+We see in general the top action movies have been increasing in gross Income every year with the exception of Covid-19 and a dip in 1985. We then found that both rating scores, metascore and IMDB rating had a similar correlation to gross income. We then decided to look further into the differences between the two rating measures, and try to see if one is better than the other in predicting a movies economic success. In the end, we see that metascore is a much more complete statistic because of it is a weighted average a various ratings.
+
+From this data, we can only say that rating of a movie is correlated with gross income. We cannot say whether these rating scores cause a movie to have a higher gross income. In order to have a comprehensive analysis of what makes a high grossing movie, we would need more variables. These variables would include total cost, expand to all genres rather than just action, Ad budget, critic nominations, franchise, etc.
